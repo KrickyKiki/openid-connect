@@ -11,8 +11,10 @@ use Laravel\Passport\Bridge\ClientRepository;
 use Lcobucci\JWT\Configuration;
 use Lcobucci\JWT\Signer\Key\InMemory;
 use League\OAuth2\Server\AuthorizationServer;
+use Nyholm\Psr7\Response;
 use OpenIDConnect\ClaimExtractor;
 use OpenIDConnect\Claims\ClaimSet;
+use OpenIDConnect\Grant\AuthCodeGrant;
 use OpenIDConnect\IdTokenResponse;
 
 class PassportServiceProvider extends Passport\PassportServiceProvider
@@ -48,15 +50,17 @@ class PassportServiceProvider extends Passport\PassportServiceProvider
     public function makeAuthorizationServer(): AuthorizationServer
     {
         $cryptKey = $this->makeCryptKey('private');
+        $encryptionKey = app(Encrypter::class)->getKey();
 
         $responseType = new IdTokenResponse(
             app(config('openid.repositories.identity')),
             app(ClaimExtractor::class),
             Configuration::forSymmetricSigner(
                 app(config('openid.signer')),
-                InMemory::file($cryptKey->getKeyPath()),
+                InMemory::plainText($cryptKey->getKeyContents()),
             ),
-            app('request')->getSchemeAndHttpHost(),
+            app(LaravelCurrentRequestService::class),
+            $encryptionKey,
         );
 
         return new AuthorizationServer(
@@ -64,8 +68,24 @@ class PassportServiceProvider extends Passport\PassportServiceProvider
             app(AccessTokenRepository::class),
             app(config('openid.repositories.scope')),
             $cryptKey,
-            app(Encrypter::class)->getKey(),
+            $encryptionKey,
             $responseType,
+        );
+    }
+
+    /**
+     * Build the Auth Code grant instance.
+     *
+     * @return AuthCodeGrant
+     */
+    protected function buildAuthCodeGrant()
+    {
+        return new AuthCodeGrant(
+            $this->app->make(Passport\Bridge\AuthCodeRepository::class),
+            $this->app->make(Passport\Bridge\RefreshTokenRepository::class),
+            new \DateInterval('PT10M'),
+            new Response(),
+            $this->app->make(LaravelCurrentRequestService::class),
         );
     }
 
